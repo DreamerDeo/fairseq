@@ -6,6 +6,7 @@
 import torch
 from fairseq import utils
 from fairseq.data import LanguagePairDataset
+from fairseq import metrics, search
 
 from . import register_task
 from .translation import TranslationTask, load_langpair_dataset
@@ -56,6 +57,7 @@ class TranslationFromPretrainedBARTTask(TranslationTask):
             for l in self.langs:
                 d.add_symbol("[{}]".format(l))
             d.add_symbol("<mask>")
+        self.args=args
 
     def load_dataset(self, split, epoch=1, combine=False, **kwargs):
         """Load a given dataset split.
@@ -89,7 +91,7 @@ class TranslationFromPretrainedBARTTask(TranslationTask):
             append_source_id=True,
         )
 
-    def build_generator(self, models, args, **unused):
+    def build_generator(self, models, args, prefix_allowed_tokens_fn, **unused):
         if getattr(args, "score_reference", False):
             from fairseq.sequence_scorer import SequenceScorer
 
@@ -99,6 +101,13 @@ class TranslationFromPretrainedBARTTask(TranslationTask):
             )
         else:
             from fairseq.sequence_generator import SequenceGenerator
+
+            if prefix_allowed_tokens_fn is not None:
+                search_strategy = search.PrefixConstrainedBeamSearch(
+                    self.target_dictionary, prefix_allowed_tokens_fn
+                )
+            else:
+                search_strategy = search.BeamSearch(self.target_dictionary)
 
             return SequenceGenerator(
                 models,
@@ -114,6 +123,7 @@ class TranslationFromPretrainedBARTTask(TranslationTask):
                 match_source_len=getattr(args, "match_source_len", False),
                 no_repeat_ngram_size=getattr(args, "no_repeat_ngram_size", 0),
                 eos=self.tgt_dict.index("[{}]".format(self.args.target_lang)),
+                search_strategy=search_strategy,
             )
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, constraints=None):
